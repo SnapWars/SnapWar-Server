@@ -5,7 +5,7 @@ WORKDIR /usr/src/app
 COPY ./requirements.txt /usr/src/app/requirements.txt
 
 RUN apt-get -qq update -y
-RUN apt-get install -y python-pip python-dev build-essential
+RUN apt-get install -y python-pip python-dev
 
 RUN pip install -r requirements.txt
 
