@@ -1,6 +1,8 @@
+import json
+
+from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from firebase_admin import credentials, firestore, initialize_app
-from google.cloud import firestore as google_firestore
 from uuid import uuid4
 
 app = Flask(__name__)
@@ -19,20 +21,28 @@ def create_war():
     body = request.get_json()
 
     if not body:
-        return jsonify({
-            'request_status': 'ERROR',
-            'reason': 'Empty request body'
-        })
+        return _error(reason='Empty request body')
 
-    display_name = body.get('display_name')
-    timestamp = google_firestore.SERVER_TIMESTAMP
+    display_name = body.get('display_name', None)
+
+    if not display_name:
+        return _error(reason='No display name provided')
+
+    external_user_id = body.get('external_user_id', None)
+    image_url = body.get('image_url', None)
+
+    if not external_user_id or not image_url:
+        return _error(reason='No external user id or image url provided')
+
+    timestamp = datetime.now(timezone.utc)
 
     war = {
         'uuid': war_uuid,
         'display_name': display_name,
-        'images': [{body.get('external_id'): body.get('image_url')}],
-        'created_at': timestamp,
-        'updated_at': timestamp
+        'images': [{'external_user_id': external_user_id,
+                    'image_url': image_url}],
+        'created_at': str(timestamp),
+        'updated_at': str(timestamp)
     }
 
     db.collection(WARS_COLLECTION)\
@@ -41,21 +51,18 @@ def create_war():
 
     return jsonify({
         'request_status': 'SUCCESS',
-        'war': war
+        'war': json.dumps(war)
     })
 
 
 @app.route('/v1/wars/<war_uuid>', methods=['GET'])
 def get_war(war_uuid):
-    doc_ref = db.collection(WARS_COLLECTION).document(war_uuid)
-
-    doc = doc_ref.get()
+    doc = db.collection(WARS_COLLECTION)\
+        .document(war_uuid)\
+        .get()
 
     if not doc.exists:
-        return jsonify({
-            'request_status': 'ERROR',
-            'reason': 'War not found with uuid {}'.format(war_uuid)
-        })
+        return _error(reason='War not found with uuid {}'.format(war_uuid))
 
     return jsonify({
         'request_status': 'SUCCESS',
@@ -78,44 +85,57 @@ def update_war(war_uuid):
     body = request.get_json()
 
     if not body:
-        return jsonify({
-            'request_status': 'ERROR',
-            'reason': 'Empty request body'
-        })
+        return _error(reason='Empty request body')
 
-    doc = db.collection(WARS_COLLECTION).document(war_uuid).get()
+    doc = db.collection(WARS_COLLECTION)\
+        .document(war_uuid)\
+        .get()
 
     if not doc.exists:
-        return jsonify({
-            'request_status': 'ERROR',
-            'reason': 'War not found with uuid {}'.format(war_uuid)
-        })
+        return _error(reason='War not found with uuid {}'.format(war_uuid))
 
     war = doc.to_dict()
 
     patch = {
-        'updated_at': google_firestore.SERVER_TIMESTAMP
+        'updated_at': str(datetime.now(timezone.utc))
     }
 
-    last_external_id = war['images'][-1]['external_id']
+    last_external_user_id = war['images'][-1]['external_user_id']
 
-    external_id = body.get('external_id')
-    image_url = body.get('image_url')
+    display_name = body.get('display_name', None)
 
-    if external_id and image_url:
-        if external_id == last_external_id:
-            return jsonify({
-                'request_status': 'ERROR',
-                'reason': 'User external id cannot be the same for consecutive images in war'
-            })
-        patch['images'] = war['images'] + [{external_id: image_url}]
-    doc.update(patch)
+    if display_name:
+        patch['display_name'] = display_name
+
+    external_user_id = body.get('external_user_id', None)
+    image_url = body.get('image_url', None)
+
+    if external_user_id and image_url:
+        if external_user_id == last_external_user_id:
+            return _error(reason='User external id cannot be the same for consecutive images in war')
+
+        patch['images'] = war['images'] + [{
+            'external_user_id': external_user_id,
+            'image_url': image_url
+        }]
+
+    db.collection(WARS_COLLECTION)\
+        .document(war_uuid)\
+        .update(patch)
+
+    war.update(patch)
 
     return jsonify({
         'request_status': 'SUCCESS',
-        'war': war.update(patch)
+        'war': war
     })
 
+
+def _error(reason):
+    return jsonify({
+        'request_status': 'ERROR',
+        'reason': reason
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
